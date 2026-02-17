@@ -812,13 +812,16 @@ class Formulario_Hapvida_Google_Sheets
             return array('success' => false, 'message' => 'A planilha de "' . $vendor_name . '" nao possui nenhuma aba.');
         }
 
-        // Encontrar a primeira e a ultima aba (menor e maior index)
+        // Encontrar a primeira aba (menor index) e a aba MM/YY mais recente
         $first_sheet = null;
         $min_index = PHP_INT_MAX;
         $last_sheet = null;
         $max_index = -1;
+        $latest_date_sheet = null;
+        $latest_date_value = -1;
         foreach ($existing_sheets as $s) {
             $idx = isset($s['properties']['index']) ? (int) $s['properties']['index'] : 0;
+            $title = isset($s['properties']['title']) ? $s['properties']['title'] : '';
             if ($idx > $max_index) {
                 $max_index = $idx;
                 $last_sheet = $s['properties'];
@@ -827,17 +830,27 @@ class Formulario_Hapvida_Google_Sheets
                 $min_index = $idx;
                 $first_sheet = $s['properties'];
             }
+            // Identificar a aba MM/YY com a data mais recente (ano*12 + mes)
+            if (preg_match('/^(\d{2})\/(\d{2})$/', trim($title), $dm)) {
+                $date_value = (int) $dm[2] * 12 + (int) $dm[1];
+                if ($date_value > $latest_date_value) {
+                    $latest_date_value = $date_value;
+                    $latest_date_sheet = $s['properties'];
+                }
+            }
         }
 
         if (!$last_sheet) {
             return array('success' => false, 'message' => 'Nao foi possivel identificar a ultima aba de "' . $vendor_name . '".');
         }
 
-        $last_title = $last_sheet['title'];
-        $last_sheet_id = (int) $last_sheet['sheetId'];
-        error_log('[Sheets Update] Ultima aba: "' . $last_title . '" (sheetId: ' . $last_sheet_id . ', index: ' . $max_index . ')');
+        // Usar a aba MM/YY mais recente para calcular o proximo mes (em vez da ultima por indice)
+        $source_sheet = $latest_date_sheet ? $latest_date_sheet : $last_sheet;
+        $last_title = $source_sheet['title'];
+        $last_sheet_id = (int) $source_sheet['sheetId'];
+        error_log('[Sheets Update] Aba fonte (MM/YY mais recente): "' . $last_title . '" (sheetId: ' . $last_sheet_id . ')');
 
-        // Calcular proximo mes a partir do nome da ultima aba (formato MM/YY)
+        // Calcular proximo mes a partir do nome da aba fonte (formato MM/YY)
         $next_tab_name = $this->calculate_next_month($last_title);
         error_log('[Sheets Update] Proxima aba: "' . $next_tab_name . '"');
 
@@ -963,9 +976,14 @@ class Formulario_Hapvida_Google_Sheets
      */
     private function calculate_next_month($tab_title)
     {
-        if (preg_match('/^(\d{2})\/(\d{2})$/', trim($tab_title), $m)) {
+        if (preg_match('/^(\d{1,2})\/(\d{2,4})$/', trim($tab_title), $m)) {
             $month = (int) $m[1];
             $year = (int) $m[2];
+
+            // Se o ano veio com 4 digitos (ex: 2026), converter para 2 digitos
+            if ($year > 99) {
+                $year = $year % 100;
+            }
 
             $month++;
             if ($month > 12) {
@@ -977,8 +995,13 @@ class Formulario_Hapvida_Google_Sheets
         }
 
         // Fallback: usar proximo mes a partir da data atual
-        $next = strtotime('+1 month');
-        return date('m/y', $next);
+        $next_month = (int) date('n') + 1;
+        $next_year = (int) date('y');
+        if ($next_month > 12) {
+            $next_month = 1;
+            $next_year++;
+        }
+        return str_pad($next_month, 2, '0', STR_PAD_LEFT) . '/' . str_pad($next_year, 2, '0', STR_PAD_LEFT);
     }
 
     // =========================================================================
